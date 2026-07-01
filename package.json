@@ -1,0 +1,25 @@
+{
+  "name": "google-ads-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "^15.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "mcp-handler": "^1.1.0",
+    "@modelcontextprotocol/sdk": "1.26.0",
+    "zod": "^3.23.8",
+    "google-ads-api": "^24.1.0",
+    "@upstash/redis": "^1.38.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3"
+  }
+}

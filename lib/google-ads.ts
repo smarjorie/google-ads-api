@@ -62,6 +62,41 @@ export async function getCustomerClient(
   });
 }
 
+/**
+ * Formata o erro retornado pela biblioteca google-ads-api de forma legível.
+ *
+ * Erros da Google Ads API não chegam como Error comuns — vêm como um objeto de falha
+ * estruturado (GoogleAdsFailure) com uma lista em `.errors`, cada um com `error_code` e
+ * `message`. Sem tratar isso explicitamente, o erro vira "[object Object]" quando
+ * serializado, escondendo o motivo real da rejeição (orçamento, política, permissão, etc).
+ */
+export function formatGoogleAdsError(err: unknown): string {
+  const anyErr = err as any;
+
+  if (Array.isArray(anyErr?.errors) && anyErr.errors.length) {
+    return anyErr.errors
+      .map((e: any) => {
+        const code = e?.error_code ? JSON.stringify(e.error_code) : null;
+        return `${e?.message ?? "Erro sem mensagem"}${code ? ` (${code})` : ""}`;
+      })
+      .join(" | ");
+  }
+
+  if (anyErr?.message && typeof anyErr.message === "string") {
+    return anyErr.message;
+  }
+
+  if (err instanceof Error) {
+    return err.message;
+  }
+
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
 export type SubAccount = {
   id: string;
   name: string | null;

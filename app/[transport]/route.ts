@@ -366,6 +366,9 @@ const handler = createMcpHandler(
               campaign_budget: budgetResourceNames.results[0].resource_name,
               advertising_channel_type: enums.AdvertisingChannelType.SEARCH,
               status: enums.CampaignStatus.PAUSED,
+              // Obrigatório desde a atualização de conformidade com anúncios políticos da UE:
+              // toda campanha nova precisa declarar se contém esse tipo de anúncio.
+              contains_eu_political_advertising: enums.EuPoliticalAdvertisingStatus.DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING,
               manual_cpc: {},
               network_settings: {
                 target_google_search: true,

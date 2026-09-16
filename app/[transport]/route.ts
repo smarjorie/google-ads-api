@@ -399,6 +399,338 @@ const handler = createMcpHandler(
     );
 
     server.registerTool(
+      "google_ads_create_display_campaign",
+      {
+        title: "Criar campanha de Display",
+        description:
+          "Cria uma nova campanha de Display (Rede de Display do Google) com orçamento diário e estratégia de lance manual por CPC. Criada PAUSADA por segurança.",
+        inputSchema: {
+          client_slug: clientSlug,
+          customer_id: customerId,
+          name: z.string().describe("Nome da campanha"),
+          daily_budget: z.number().positive().describe("Orçamento diário na moeda da conta (ex: 50.00)"),
+          refresh_token: refreshTokenParam,
+          login_customer_id: loginCustomerIdParam,
+        },
+      },
+      async ({ client_slug, customer_id, name, daily_budget, refresh_token, login_customer_id }) => {
+        try {
+          const customer = await getCustomerClient(client_slug, customer_id, refresh_token, login_customer_id);
+
+          const budgetResourceNames = await customer.campaignBudgets.create([
+            {
+              name: `${name} - orçamento`,
+              amount_micros: Math.round(daily_budget * 1_000_000),
+              delivery_method: enums.BudgetDeliveryMethod.STANDARD,
+              explicitly_shared: false,
+            },
+          ]);
+
+          const campaignResourceNames = await customer.campaigns.create([
+            {
+              name,
+              campaign_budget: budgetResourceNames.results[0].resource_name,
+              advertising_channel_type: enums.AdvertisingChannelType.DISPLAY,
+              status: enums.CampaignStatus.PAUSED,
+              contains_eu_political_advertising: enums.EuPoliticalAdvertisingStatus.DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING,
+              manual_cpc: {},
+            },
+          ]);
+
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `✅ Campanha de Display "${name}" criada como PAUSADA (${campaignResourceNames.results[0].resource_name}), ` +
+                  `orçamento R$ ${daily_budget.toFixed(2)}/dia. Crie um grupo de anúncios e os anúncios de display (imagem/responsivo) antes de ativar.`,
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [
+              { type: "text", text: `❌ Erro ao criar a campanha de Display "${name}": ${formatGoogleAdsError(err)}` },
+            ],
+            isError: true,
+          };
+        }
+      }
+    );
+
+    server.registerTool(
+      "google_ads_create_performance_max_campaign",
+      {
+        title: "Criar campanha Performance Max",
+        description:
+          "Cria o ESQUELETO de uma campanha Performance Max (orçamento + campanha, com lance 'Maximizar conversões'), criada PAUSADA. " +
+          "IMPORTANTE: uma campanha PMax só veicula anúncios depois de ter pelo menos um 'asset group' (grupo de recursos: títulos, " +
+          "descrições, imagens, logo, URL final). Essa ferramenta NÃO cria o asset group — isso ainda precisa ser feito no Google Ads " +
+          "Manager antes de ativar a campanha.",
+        inputSchema: {
+          client_slug: clientSlug,
+          customer_id: customerId,
+          name: z.string().describe("Nome da campanha"),
+          daily_budget: z.number().positive().describe("Orçamento diário na moeda da conta (ex: 50.00)"),
+          refresh_token: refreshTokenParam,
+          login_customer_id: loginCustomerIdParam,
+        },
+      },
+      async ({ client_slug, customer_id, name, daily_budget, refresh_token, login_customer_id }) => {
+        try {
+          const customer = await getCustomerClient(client_slug, customer_id, refresh_token, login_customer_id);
+
+          const budgetResourceNames = await customer.campaignBudgets.create([
+            {
+              name: `${name} - orçamento`,
+              amount_micros: Math.round(daily_budget * 1_000_000),
+              delivery_method: enums.BudgetDeliveryMethod.STANDARD,
+              explicitly_shared: false,
+            },
+          ]);
+
+          const campaignResourceNames = await customer.campaigns.create([
+            {
+              name,
+              campaign_budget: budgetResourceNames.results[0].resource_name,
+              advertising_channel_type: enums.AdvertisingChannelType.PERFORMANCE_MAX,
+              status: enums.CampaignStatus.PAUSED,
+              contains_eu_political_advertising: enums.EuPoliticalAdvertisingStatus.DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING,
+              maximize_conversions: {},
+            },
+          ]);
+
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `✅ Campanha Performance Max "${name}" criada como PAUSADA (${campaignResourceNames.results[0].resource_name}), ` +
+                  `orçamento R$ ${daily_budget.toFixed(2)}/dia.\n\n` +
+                  `⚠️ Ainda NÃO vai veicular: falta adicionar o asset group (títulos, descrições, imagens, logo, URL final) no ` +
+                  `Google Ads Manager antes de ativar.`,
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ Erro ao criar a campanha Performance Max "${name}": ${formatGoogleAdsError(err)}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+    );
+
+    server.registerTool(
+      "google_ads_add_sitelinks",
+      {
+        title: "Adicionar sitelinks (extensão)",
+        description:
+          "Cria links de site (sitelinks) e os associa a uma campanha, para aparecerem como extensão nos anúncios dela.",
+        inputSchema: {
+          client_slug: clientSlug,
+          customer_id: customerId,
+          campaign_id: z.string().describe("ID numérico da campanha"),
+          sitelinks: z
+            .array(
+              z.object({
+                link_text: z.string().max(25).describe("Texto do link (até 25 caracteres)"),
+                final_url: z.string().url().describe("URL de destino do sitelink"),
+                description1: z.string().max(35).optional().describe("Primeira linha de descrição (até 35 caracteres)"),
+                description2: z.string().max(35).optional().describe("Segunda linha de descrição (até 35 caracteres)"),
+              })
+            )
+            .min(1)
+            .max(20),
+          refresh_token: refreshTokenParam,
+          login_customer_id: loginCustomerIdParam,
+        },
+      },
+      async ({ client_slug, customer_id, campaign_id, sitelinks, refresh_token, login_customer_id }) => {
+        try {
+          const customer = await getCustomerClient(client_slug, customer_id, refresh_token, login_customer_id);
+          const campaignResourceName = `customers/${customer_id.replace(/-/g, "")}/campaigns/${campaign_id}`;
+
+          const assetResults = await customer.assets.create(
+            sitelinks.map((sl) => ({
+              type: enums.AssetType.SITELINK,
+              final_urls: [sl.final_url],
+              sitelink_asset: {
+                link_text: sl.link_text,
+                ...(sl.description1 ? { description1: sl.description1 } : {}),
+                ...(sl.description2 ? { description2: sl.description2 } : {}),
+              },
+            }))
+          );
+
+          await customer.campaignAssets.create(
+            assetResults.results.map((r) => ({
+              campaign: campaignResourceName,
+              asset: r.resource_name,
+              field_type: enums.AssetFieldType.SITELINK,
+            }))
+          );
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `✅ ${sitelinks.length} sitelink(s) criado(s) e associado(s) à campanha ${campaign_id}:\n${sitelinks
+                  .map((s) => `- "${s.link_text}" → ${s.final_url}`)
+                  .join("\n")}`,
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [{ type: "text", text: `❌ Erro ao adicionar sitelinks: ${formatGoogleAdsError(err)}` }],
+            isError: true,
+          };
+        }
+      }
+    );
+
+    server.registerTool(
+      "google_ads_add_callouts",
+      {
+        title: "Adicionar callouts (extensão)",
+        description: "Cria frases de destaque (callouts) e as associa a uma campanha, como extensão dos anúncios dela.",
+        inputSchema: {
+          client_slug: clientSlug,
+          customer_id: customerId,
+          campaign_id: z.string().describe("ID numérico da campanha"),
+          callouts: z.array(z.string().max(25)).min(1).max(20).describe("Textos dos callouts (até 25 caracteres cada)"),
+          refresh_token: refreshTokenParam,
+          login_customer_id: loginCustomerIdParam,
+        },
+      },
+      async ({ client_slug, customer_id, campaign_id, callouts, refresh_token, login_customer_id }) => {
+        try {
+          const customer = await getCustomerClient(client_slug, customer_id, refresh_token, login_customer_id);
+          const campaignResourceName = `customers/${customer_id.replace(/-/g, "")}/campaigns/${campaign_id}`;
+
+          const assetResults = await customer.assets.create(
+            callouts.map((text) => ({
+              type: enums.AssetType.CALLOUT,
+              callout_asset: { callout_text: text },
+            }))
+          );
+
+          await customer.campaignAssets.create(
+            assetResults.results.map((r) => ({
+              campaign: campaignResourceName,
+              asset: r.resource_name,
+              field_type: enums.AssetFieldType.CALLOUT,
+            }))
+          );
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `✅ ${callouts.length} callout(s) criado(s) e associado(s) à campanha ${campaign_id}: ${callouts
+                  .map((c) => `"${c}"`)
+                  .join(", ")}`,
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [{ type: "text", text: `❌ Erro ao adicionar callouts: ${formatGoogleAdsError(err)}` }],
+            isError: true,
+          };
+        }
+      }
+    );
+
+    server.registerTool(
+      "google_ads_create_conversion_action",
+      {
+        title: "Criar ação de conversão (meta)",
+        description:
+          "Cria uma ação de conversão (meta) baseada em página web — por exemplo, 'Envio de formulário' ou 'Compra'. " +
+          "Depois de criada, é preciso instalar a tag/snippet de conversão gerada pelo Google Ads no site (isso não é feito por " +
+          "essa ferramenta) para a conversão começar a ser registrada de verdade.",
+        inputSchema: {
+          client_slug: clientSlug,
+          customer_id: customerId,
+          name: z.string().describe("Nome da ação de conversão (ex: 'Envio de formulário')"),
+          category: z
+            .enum([
+              "DEFAULT",
+              "PAGE_VIEW",
+              "PURCHASE",
+              "SIGNUP",
+              "DOWNLOAD",
+              "ADD_TO_CART",
+              "BEGIN_CHECKOUT",
+              "SUBMIT_LEAD_FORM",
+              "CONTACT",
+              "ENGAGEMENT",
+            ])
+            .default("DEFAULT")
+            .describe("Categoria da conversão"),
+          counting_type: z
+            .enum(["ONE_PER_CLICK", "MANY_PER_CLICK"])
+            .default("ONE_PER_CLICK")
+            .describe("Contar uma conversão por clique ou várias"),
+          default_value: z.number().nonnegative().optional().describe("Valor padrão da conversão (opcional)"),
+          refresh_token: refreshTokenParam,
+          login_customer_id: loginCustomerIdParam,
+        },
+      },
+      async ({
+        client_slug,
+        customer_id,
+        name,
+        category,
+        counting_type,
+        default_value,
+        refresh_token,
+        login_customer_id,
+      }) => {
+        try {
+          const customer = await getCustomerClient(client_slug, customer_id, refresh_token, login_customer_id);
+
+          const result = await customer.conversionActions.create([
+            {
+              name,
+              type: enums.ConversionActionType.WEBPAGE,
+              category: enums.ConversionActionCategory[category],
+              status: enums.ConversionActionStatus.ENABLED,
+              counting_type: enums.ConversionActionCountingType[counting_type],
+              ...(default_value !== undefined
+                ? { value_settings: { default_value, always_use_default_value: true } }
+                : {}),
+            },
+          ]);
+
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `✅ Ação de conversão "${name}" criada (${result.results[0].resource_name}).\n` +
+                  `Próximo passo: instale a tag de conversão no site (Google Ads Manager → Metas → Conversões → "${name}" → Ver tag) ` +
+                  `pra ela começar a registrar conversões de verdade.`,
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [{ type: "text", text: `❌ Erro ao criar a ação de conversão "${name}": ${formatGoogleAdsError(err)}` }],
+            isError: true,
+          };
+        }
+      }
+    );
+
+    server.registerTool(
       "google_ads_create_ad_group",
       {
         title: "Criar grupo de anúncios",
@@ -483,6 +815,85 @@ const handler = createMcpHandler(
             },
           ],
         };
+      }
+    );
+
+    server.registerTool(
+      "google_ads_create_responsive_search_ad",
+      {
+        title: "Criar anúncio de pesquisa responsivo (RSA)",
+        description:
+          "Cria um Responsive Search Ad (RSA) dentro de um grupo de anúncios existente, com múltiplos títulos e " +
+          "descrições que o Google Ads combina automaticamente.",
+        inputSchema: {
+          client_slug: clientSlug,
+          customer_id: customerId,
+          ad_group_id: z.string().describe("ID numérico do grupo de anúncios"),
+          headlines: z
+            .array(z.string().max(30, "Cada título tem no máximo 30 caracteres"))
+            .min(3, "Mínimo de 3 títulos")
+            .max(15, "Máximo de 15 títulos"),
+          descriptions: z
+            .array(z.string().max(90, "Cada descrição tem no máximo 90 caracteres"))
+            .min(2, "Mínimo de 2 descrições")
+            .max(4, "Máximo de 4 descrições"),
+          final_urls: z.array(z.string().url()).min(1).describe("URL(s) de destino do anúncio"),
+          path1: z.string().max(15).optional().describe("Primeiro trecho da URL exibida (opcional)"),
+          path2: z.string().max(15).optional().describe("Segundo trecho da URL exibida (opcional, requer path1)"),
+          status: z.enum(["ENABLED", "PAUSED"]).default("PAUSED"),
+          refresh_token: refreshTokenParam,
+          login_customer_id: loginCustomerIdParam,
+        },
+      },
+      async ({
+        client_slug,
+        customer_id,
+        ad_group_id,
+        headlines,
+        descriptions,
+        final_urls,
+        path1,
+        path2,
+        status,
+        refresh_token,
+        login_customer_id,
+      }) => {
+        try {
+          const customer = await getCustomerClient(client_slug, customer_id, refresh_token, login_customer_id);
+          const adGroupResourceName = `customers/${customer_id.replace(/-/g, "")}/adGroups/${ad_group_id}`;
+
+          const result = await customer.adGroupAds.create([
+            {
+              ad_group: adGroupResourceName,
+              status: enums.AdGroupAdStatus[status],
+              ad: {
+                final_urls,
+                responsive_search_ad: {
+                  headlines: headlines.map((text) => ({ text })),
+                  descriptions: descriptions.map((text) => ({ text })),
+                  ...(path1 ? { path1 } : {}),
+                  ...(path2 ? { path2 } : {}),
+                },
+              },
+            },
+          ]);
+
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `✅ RSA criado (${result.results[0].resource_name}) no grupo de anúncios ${ad_group_id}, status ${status}.\n` +
+                  `Títulos: ${headlines.length} | Descrições: ${descriptions.length}`,
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [{ type: "text", text: `❌ Erro ao criar o RSA: ${formatGoogleAdsError(err)}` }],
+            isError: true,
+          };
+        }
       }
     );
 

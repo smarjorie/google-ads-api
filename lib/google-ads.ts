@@ -72,29 +72,35 @@ export async function getCustomerClient(
  */
 export function formatGoogleAdsError(err: unknown): string {
   const anyErr = err as any;
+  let summary: string | null = null;
 
   if (Array.isArray(anyErr?.errors) && anyErr.errors.length) {
-    return anyErr.errors
+    summary = anyErr.errors
       .map((e: any) => {
         const code = e?.error_code ? JSON.stringify(e.error_code) : null;
-        return `${e?.message ?? "Erro sem mensagem"}${code ? ` (${code})` : ""}`;
+        const fieldPath = e?.location?.field_path_elements
+          ?.map((el: any) => el?.field_name)
+          .filter(Boolean)
+          .join(".");
+        return `${e?.message ?? "Erro sem mensagem"}${code ? ` (${code})` : ""}${
+          fieldPath ? ` [campo: ${fieldPath}]` : ""
+        }`;
       })
       .join(" | ");
+  } else if (anyErr?.message && typeof anyErr.message === "string") {
+    summary = anyErr.message;
+  } else if (err instanceof Error) {
+    summary = err.message;
   }
 
-  if (anyErr?.message && typeof anyErr.message === "string") {
-    return anyErr.message;
-  }
-
-  if (err instanceof Error) {
-    return err.message;
-  }
-
+  let raw: string;
   try {
-    return JSON.stringify(err);
+    raw = JSON.stringify(anyErr, Object.getOwnPropertyNames(anyErr ?? {}), 2);
   } catch {
-    return String(err);
+    raw = String(err);
   }
+
+  return summary ? `${summary}\n\nDetalhe bruto: ${raw}` : `Detalhe bruto: ${raw}`;
 }
 
 export type SubAccount = {

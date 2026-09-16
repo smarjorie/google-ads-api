@@ -3,7 +3,7 @@ import { z } from "zod";
 import { randomUUID } from "crypto";
 import { buildAuthUrl } from "@/lib/oauth";
 import { saveOAuthState, getClientToken, deleteClientToken } from "@/lib/redis";
-import { getCustomerClient, listAccessibleCustomers, enums } from "@/lib/google-ads";
+import { getCustomerClient, listAccessibleCustomers, listSubAccounts, enums } from "@/lib/google-ads";
 
 const clientSlug = z
   .string()
@@ -21,6 +21,16 @@ const refreshTokenParam = z
   .optional()
   .describe(
     "Opcional. Só use se o servidor NÃO tiver um banco persistente configurado (Upstash Redis): cole aqui o refresh_token mostrado na página de sucesso após o login do cliente. Se o banco estiver configurado, não é necessário informar isso."
+  );
+
+const loginCustomerIdParam = z
+  .string()
+  .optional()
+  .describe(
+    "Opcional. ID da conta MCC (gerenciadora), 10 dígitos sem hífens, pela qual essa customer_id é acessada. " +
+      "Obrigatório quando a conta em customer_id é uma sub-conta de uma MCC — sem isso a API rejeita a chamada " +
+      "como se a conta não fosse acessível. Use google_ads_list_sub_accounts para descobrir o customer_id correto " +
+      "a partir da MCC."
   );
 
 function money(microAmount: number | string | null | undefined) {
@@ -134,6 +144,43 @@ const handler = createMcpHandler(
       }
     );
 
+    server.registerTool(
+      "google_ads_list_sub_accounts",
+      {
+        title: "Listar sub-contas de uma MCC",
+        description:
+          "Lista as sub-contas (clientes) visíveis a partir de uma conta gerenciadora (MCC). Use quando " +
+          "google_ads_list_accounts só mostrar a MCC e não as contas dos clientes finais — é necessário " +
+          "para achar o customer_id certo antes de criar campanhas. O customer_id retornado deve ser usado junto " +
+          "com login_customer_id = ID desta MCC nas demais ferramentas.",
+        inputSchema: {
+          client_slug: clientSlug,
+          manager_customer_id: customerId.describe("ID da conta MCC (gerenciadora), 10 dígitos sem hífens."),
+          refresh_token: refreshTokenParam,
+        },
+      },
+      async ({ client_slug, manager_customer_id, refresh_token }) => {
+        const subAccounts = await listSubAccounts(client_slug, manager_customer_id, refresh_token);
+        const clients = subAccounts.filter((a) => !a.isManager);
+        const text = clients.length
+          ? clients
+              .map((a) => `- ${a.id} "${a.name ?? "(sem nome)"}" — ${a.status}`)
+              .join("\n")
+          : "Nenhuma sub-conta de cliente encontrada nessa MCC.";
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `Sub-contas de ${manager_customer_id}:\n${text}\n\n` +
+                `Para criar/gerenciar campanhas nessas contas, passe customer_id = o ID listado acima e ` +
+                `login_customer_id = ${manager_customer_id}.`,
+            },
+          ],
+        };
+      }
+    );
+
     // ---------------------------------------------------------------------
     // LEITURA: CAMPANHAS E PERFORMANCE
     // ---------------------------------------------------------------------
@@ -225,10 +272,11 @@ const handler = createMcpHandler(
           campaign_id: z.string().describe("ID numérico da campanha"),
           status: z.enum(["ENABLED", "PAUSED", "REMOVED"]),
           refresh_token: refreshTokenParam,
+          login_customer_id: loginCustomerIdParam,
         },
       },
-      async ({ client_slug, customer_id, campaign_id, status, refresh_token }) => {
-        const customer = await getCustomerClient(client_slug, customer_id, refresh_token);
+      async ({ client_slug, customer_id, campaign_id, status, refresh_token, login_customer_id }) => {
+        const customer = await getCustomerClient(client_slug, customer_id, refresh_token, login_customer_id);
         const resourceName = `customers/${customer_id.replace(/-/g, "")}/campaigns/${campaign_id}`;
         await customer.campaigns.update([
           { resource_name: resourceName, status: enums.CampaignStatus[status] },
@@ -250,10 +298,11 @@ const handler = createMcpHandler(
           campaign_id: z.string().describe("ID numérico da campanha"),
           daily_budget: z.number().positive().describe("Novo orçamento diário, na moeda da conta (ex: 50.00)"),
           refresh_token: refreshTokenParam,
+          login_customer_id: loginCustomerIdParam,
         },
       },
-      async ({ client_slug, customer_id, campaign_id, daily_budget, refresh_token }) => {
-        const customer = await getCustomerClient(client_slug, customer_id, refresh_token);
+      async ({ client_slug, customer_id, campaign_id, daily_budget, refresh_token, login_customer_id }) => {
+        const customer = await getCustomerClient(client_slug, customer_id, refresh_token, login_customer_id);
         const rows = await customer.query(`
           SELECT campaign_budget.resource_name
           FROM campaign
@@ -295,10 +344,11 @@ const handler = createMcpHandler(
           name: z.string().describe("Nome da campanha"),
           daily_budget: z.number().positive().describe("Orçamento diário na moeda da conta (ex: 50.00)"),
           refresh_token: refreshTokenParam,
+          login_customer_id: loginCustomerIdParam,
         },
       },
-      async ({ client_slug, customer_id, name, daily_budget, refresh_token }) => {
-        const customer = await getCustomerClient(client_slug, customer_id, refresh_token);
+      async ({ client_slug, customer_id, name, daily_budget, refresh_token, login_customer_id }) => {
+        const customer = await getCustomerClient(client_slug, customer_id, refresh_token, login_customer_id);
 
         const budgetResourceNames = await customer.campaignBudgets.create([
           {
@@ -349,10 +399,11 @@ const handler = createMcpHandler(
           name: z.string().describe("Nome do grupo de anúncios"),
           default_cpc_bid: z.number().positive().describe("Lance de CPC padrão, na moeda da conta (ex: 1.50)"),
           refresh_token: refreshTokenParam,
+          login_customer_id: loginCustomerIdParam,
         },
       },
-      async ({ client_slug, customer_id, campaign_id, name, default_cpc_bid, refresh_token }) => {
-        const customer = await getCustomerClient(client_slug, customer_id, refresh_token);
+      async ({ client_slug, customer_id, campaign_id, name, default_cpc_bid, refresh_token, login_customer_id }) => {
+        const customer = await getCustomerClient(client_slug, customer_id, refresh_token, login_customer_id);
         const campaignResourceName = `customers/${customer_id.replace(/-/g, "")}/campaigns/${campaign_id}`;
 
         const adGroupResourceNames = await customer.adGroups.create([
@@ -395,10 +446,11 @@ const handler = createMcpHandler(
             )
             .min(1),
           refresh_token: refreshTokenParam,
+          login_customer_id: loginCustomerIdParam,
         },
       },
-      async ({ client_slug, customer_id, ad_group_id, keywords, refresh_token }) => {
-        const customer = await getCustomerClient(client_slug, customer_id, refresh_token);
+      async ({ client_slug, customer_id, ad_group_id, keywords, refresh_token, login_customer_id }) => {
+        const customer = await getCustomerClient(client_slug, customer_id, refresh_token, login_customer_id);
         const adGroupResourceName = `customers/${customer_id.replace(/-/g, "")}/adGroups/${ad_group_id}`;
 
         const operations = keywords.map((kw) => ({

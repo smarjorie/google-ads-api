@@ -3,7 +3,7 @@ import { z } from "zod";
 import { randomUUID } from "crypto";
 import { buildAuthUrl } from "@/lib/oauth";
 import { saveOAuthState, getClientToken, deleteClientToken } from "@/lib/redis";
-import { getCustomerClient, listAccessibleCustomers, listSubAccounts, enums } from "@/lib/google-ads";
+import { getCustomerClient, listAccessibleCustomers, listSubAccounts, formatGoogleAdsError, enums } from "@/lib/google-ads";
 
 const clientSlug = z
   .string()
@@ -348,42 +348,50 @@ const handler = createMcpHandler(
         },
       },
       async ({ client_slug, customer_id, name, daily_budget, refresh_token, login_customer_id }) => {
-        const customer = await getCustomerClient(client_slug, customer_id, refresh_token, login_customer_id);
+        try {
+          const customer = await getCustomerClient(client_slug, customer_id, refresh_token, login_customer_id);
 
-        const budgetResourceNames = await customer.campaignBudgets.create([
-          {
-            name: `${name} - orçamento`,
-            amount_micros: Math.round(daily_budget * 1_000_000),
-            delivery_method: enums.BudgetDeliveryMethod.STANDARD,
-          },
-        ]);
-
-        const campaignResourceNames = await customer.campaigns.create([
-          {
-            name,
-            campaign_budget: budgetResourceNames.results[0].resource_name,
-            advertising_channel_type: enums.AdvertisingChannelType.SEARCH,
-            status: enums.CampaignStatus.PAUSED,
-            manual_cpc: {},
-            network_settings: {
-              target_google_search: true,
-              target_search_network: true,
-              target_content_network: false,
-              target_partner_search_network: false,
-            },
-          },
-        ]);
-
-        return {
-          content: [
+          const budgetResourceNames = await customer.campaignBudgets.create([
             {
-              type: "text",
-              text:
-                `✅ Campanha "${name}" criada como PAUSADA (${campaignResourceNames.results[0].resource_name}), ` +
-                `orçamento R$ ${daily_budget.toFixed(2)}/dia. Crie um grupo de anúncios com google_ads_create_ad_group e ative quando estiver pronta.`,
+              name: `${name} - orçamento`,
+              amount_micros: Math.round(daily_budget * 1_000_000),
+              delivery_method: enums.BudgetDeliveryMethod.STANDARD,
+              explicitly_shared: false,
             },
-          ],
-        };
+          ]);
+
+          const campaignResourceNames = await customer.campaigns.create([
+            {
+              name,
+              campaign_budget: budgetResourceNames.results[0].resource_name,
+              advertising_channel_type: enums.AdvertisingChannelType.SEARCH,
+              status: enums.CampaignStatus.PAUSED,
+              manual_cpc: {},
+              network_settings: {
+                target_google_search: true,
+                target_search_network: true,
+                target_content_network: false,
+                target_partner_search_network: false,
+              },
+            },
+          ]);
+
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `✅ Campanha "${name}" criada como PAUSADA (${campaignResourceNames.results[0].resource_name}), ` +
+                  `orçamento R$ ${daily_budget.toFixed(2)}/dia. Crie um grupo de anúncios com google_ads_create_ad_group e ative quando estiver pronta.`,
+              },
+            ],
+          };
+        } catch (err) {
+          return {
+            content: [{ type: "text", text: `❌ Erro ao criar a campanha "${name}": ${formatGoogleAdsError(err)}` }],
+            isError: true,
+          };
+        }
       }
     );
 
